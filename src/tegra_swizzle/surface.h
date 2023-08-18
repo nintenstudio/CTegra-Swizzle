@@ -147,7 +147,7 @@ size_t deswizzled_surface_size(
 }
 
 template <bool DESWIZZLE>
-std::vector<unsigned char> surface_destination(
+void surface_destination(
     size_t width,
     size_t height,
     size_t depth,
@@ -156,7 +156,10 @@ std::vector<unsigned char> surface_destination(
     size_t bytes_per_pixel,
     size_t mipmap_count,
     size_t layer_count,
-    std::vector<unsigned char>& source
+    unsigned char* source,
+    size_t source_size,
+    unsigned char** result,
+    size_t* result_size
 ) {
     size_t swizzled_size = swizzled_surface_size(
         width,
@@ -183,14 +186,14 @@ std::vector<unsigned char> surface_destination(
 
     // Validate the source length before attempting to allocate.
     // This reduces potential out of memory panics.
-    if (source.size() < expected_size) {
+    if (source_size < expected_size) {
         throw std::runtime_error("Not enough data!");
     }
 
     // Assume the calculated size is accurate, so don't reallocate later.
-    std::vector<unsigned char> result;
-    result.resize(surface_size, (unsigned char)0);
-    return result;
+    *result = new unsigned char[surface_size];
+    std::fill(*result, *result + surface_size, (unsigned char)0);
+    *result_size = surface_size;
 }
 
 template <bool DESWIZZLE>
@@ -201,41 +204,39 @@ void swizzle_mipmap(
     BlockHeight block_height,
     size_t block_depth,
     size_t bytes_per_pixel,
-    const std::vector<unsigned char>& source,
+    unsigned char* source,
+    size_t source_size,
     size_t& src_offset,
-    std::vector<unsigned char>& dst,
+    unsigned char* dst,
+    size_t dst_size,
     size_t& dst_offset
 ) {
     size_t swizzled_size = swizzled_mip_size(width, height, depth, block_height, bytes_per_pixel);
     size_t deswizzled_size = deswizzled_mip_size(width, height, depth, bytes_per_pixel);
 
     // Make sure the source has enough space.
-    if (DESWIZZLE && source.size() < src_offset + swizzled_size) {
+    if (DESWIZZLE && source_size < src_offset + swizzled_size) {
         throw std::runtime_error("Not enough data!");
     }
 
-    if (!DESWIZZLE && source.size() < src_offset + deswizzled_size) {
+    if (!DESWIZZLE && source_size < src_offset + deswizzled_size) {
         throw std::runtime_error("Not enough data!");
     }
 
-    std::vector part_of_source(source.begin() + src_offset, source.end());
-    std::vector part_of_dst(dst.begin() + dst_offset, dst.end());
 
     // Swizzle the data and move to the next section.
     swizzle_inner<DESWIZZLE>(
         width,
         height,
         depth,
-        part_of_source,
-        part_of_dst,
+        source + src_offset,
+        source_size - src_offset,
+        dst + dst_offset,
+        dst_size - dst_offset,
         block_height,
         block_depth,
         bytes_per_pixel
     );
-
-    // TODO: Find a faster C++ implementation than copying
-    for (size_t i = 0; i < part_of_dst.size(); i++)
-        dst[i + dst_offset] = part_of_dst[i];
 
     if (DESWIZZLE) {
         src_offset += swizzled_size;
@@ -252,8 +253,10 @@ void swizzle_surface_inner(
     size_t width,
     size_t height,
     size_t depth,
-    std::vector<unsigned char>& source,
-    std::vector<unsigned char>& result,
+    unsigned char* source,
+    size_t source_size,
+    unsigned char* result,
+    size_t result_size,
     BlockDim block_dim,
     std::optional<BlockHeight> _block_height_mip0, // TODO: Make this optional in other functions as well?
     size_t bytes_per_pixel,
@@ -290,8 +293,10 @@ void swizzle_surface_inner(
                 _mip_block_depth,
                 bytes_per_pixel,
                 source,
+                source_size,
                 src_offset,
                 result,
+                result_size,
                 dst_offset
             );
         }
@@ -315,18 +320,21 @@ void swizzle_surface_inner(
 /// at least as many bytes as the result of [deswizzled_surface_size].
 ///
 /// Set `block_height_mip0` to [None] to infer the block height from the specified dimensions.
-std::vector<unsigned char> swizzle_surface(
+void swizzle_surface(
     size_t width,
     size_t height,
     size_t depth,
-    std::vector<unsigned char>& source,
+    unsigned char* source,
+    size_t source_size,
     BlockDim block_dim, // TODO: Use None to indicate uncompressed?
     std::optional<BlockHeight> block_height_mip0, // TODO: Make this optional in other functions as well?
     size_t bytes_per_pixel,
     size_t mipmap_count,
-    size_t layer_count
+    size_t layer_count,
+    unsigned char** result,
+    size_t* result_size
 ) {
-    std::vector<unsigned char> result = surface_destination<false>(
+    surface_destination<false>(
         width,
         height,
         depth,
@@ -335,7 +343,10 @@ std::vector<unsigned char> swizzle_surface(
         bytes_per_pixel,
         mipmap_count,
         layer_count,
-        source
+        source,
+        source_size,
+        result,
+        result_size
     );
 
     swizzle_surface_inner<false>(
@@ -343,15 +354,15 @@ std::vector<unsigned char> swizzle_surface(
         height,
         depth,
         source,
-        result,
+        source_size,
+        *result,
+        *result_size,
         block_dim,
         block_height_mip0,
         bytes_per_pixel,
         mipmap_count,
         layer_count
     );
-
-    return result;
 }
 
 // TODO: Find a way to simplify the parameters.
@@ -362,18 +373,21 @@ std::vector<unsigned char> swizzle_surface(
 /// at least as many bytes as the result of [swizzled_surface_size].
 ///
 /// Set `block_height_mip0` to [None] to infer the block height from the specified dimensions.
-std::vector<unsigned char> deswizzle_surface(
+void deswizzle_surface(
     size_t width,
     size_t height,
     size_t depth,
-    std::vector<unsigned char>& source,
+    unsigned char* source,
+    size_t source_size,
     BlockDim block_dim,
     std::optional<BlockHeight> block_height_mip0, // TODO: Make this optional in other functions as well?
     size_t bytes_per_pixel,
     size_t mipmap_count,
-    size_t layer_count
+    size_t layer_count,
+    unsigned char** result,
+    size_t* result_size
 ) {
-    std::vector<unsigned char> result = surface_destination<true>(
+    surface_destination<true>(
         width,
         height,
         depth,
@@ -382,7 +396,10 @@ std::vector<unsigned char> deswizzle_surface(
         bytes_per_pixel,
         mipmap_count,
         layer_count,
-        source
+        source,
+        source_size,
+        result,
+        result_size
     );
 
     swizzle_surface_inner<true>(
@@ -390,13 +407,13 @@ std::vector<unsigned char> deswizzle_surface(
         height,
         depth,
         source,
-        result,
+        source_size,
+        *result,
+        *result_size,
         block_dim,
         block_height_mip0,
         bytes_per_pixel,
         mipmap_count,
         layer_count
     );
-
-    return result;
 }

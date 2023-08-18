@@ -176,8 +176,8 @@ size_t deswizzled_mip_size(
 
 template <bool DESWIZZLE>
 void swizzle_deswizzle_gob(
-    std::vector<unsigned char>& destination,
-    std::vector<unsigned char>& source,
+    unsigned char* destination,
+    unsigned char* source,
     size_t x0,
     size_t y0,
     size_t z0,
@@ -212,8 +212,10 @@ void swizzle_inner(
     size_t width,
     size_t height,
     size_t depth,
-    std::vector<unsigned char>& source,
-    std::vector<unsigned char>& destination,
+    unsigned char* source,
+    size_t source_size,
+    unsigned char* destination,
+    size_t destination_size,
     BlockHeight block_height,
     size_t block_depth,
     size_t bytes_per_pixel
@@ -263,15 +265,15 @@ void swizzle_inner(
                     // Use optimized code to reassign bytes.
                     if (DESWIZZLE) {
                         deswizzle_complete_gob(
-                            destination.data() + linear_offset,
-                            source.data() + gob_address,
+                            destination + linear_offset,
+                            source + gob_address,
                             width * bytes_per_pixel
                         );
                     }
                     else {
                         swizzle_complete_gob(
-                            destination.data() + gob_address,
-                            source.data() + linear_offset,
+                            destination + gob_address,
+                            source + linear_offset,
                             width * bytes_per_pixel
                         );
                     }
@@ -336,19 +338,23 @@ let output = swizzle_block_linear(width, height, 1, &input, BlockHeight::Sixteen
  );
  ```
   */
-std::vector<unsigned char> swizzle_block_linear(
+void swizzle_block_linear(
     size_t width,
     size_t height,
     size_t depth,
-    std::vector<unsigned char> source,
+    unsigned char* source,
+    size_t source_size,
     BlockHeight block_height,
-    size_t bytes_per_pixel
+    size_t bytes_per_pixel,
+    unsigned char** destination,
+    size_t* destination_size
 ) {
-    std::vector<unsigned char> destination(swizzled_mip_size(width, height, depth, block_height, bytes_per_pixel));
-    std::fill(destination.begin(), destination.end(), (unsigned char)0);
+    *destination_size = swizzled_mip_size(width, height, depth, block_height, bytes_per_pixel);
+    *destination = new unsigned char[*destination_size];
+    std::fill(*destination, *destination + *destination_size, (unsigned char)0);
 
     const size_t expected_size = deswizzled_mip_size(width, height, depth, bytes_per_pixel);
-    if (source.size() < expected_size) {
+    if (source_size < expected_size) {
         throw new std::runtime_error("Not enough data!");
     }
 
@@ -360,13 +366,13 @@ std::vector<unsigned char> swizzle_block_linear(
         height,
         depth,
         source,
-        destination,
+        source_size,
+        *destination,
+        *destination_size,
         block_height,
         _block_depth,
         bytes_per_pixel
     );
-
-    return destination;
 }
 
 /// Deswizzles the bytes from `source` using the block linear swizzling algorithm.
@@ -408,19 +414,23 @@ let output = deswizzle_block_linear(width, height, 1, &input, BlockHeight::Sixte
  );
  ```
   */
-std::vector<unsigned char> deswizzle_block_linear(
+void deswizzle_block_linear(
     size_t width,
     size_t height,
     size_t depth,
-    std::vector<unsigned char> source,
+    unsigned char* source,
+    size_t source_size,
     BlockHeight block_height,
-    size_t bytes_per_pixel
+    size_t bytes_per_pixel,
+    unsigned char** destination,
+    size_t* destination_size
 ) {
-    std::vector<unsigned char> destination(deswizzled_mip_size(width, height, depth, bytes_per_pixel));
-    std::fill(destination.begin(), destination.end(), (unsigned char)0);
+    *destination_size = deswizzled_mip_size(width, height, depth, bytes_per_pixel);
+    *destination = new unsigned char[*destination_size];
+    std::fill(*destination, *destination + *destination_size, (unsigned char)0);
 
     const size_t expected_size = swizzled_mip_size(width, height, depth, block_height, bytes_per_pixel);
-    if (source.size() < expected_size) {
+    if (source_size < expected_size) {
         throw new std::runtime_error("Not enough data!");
     }
 
@@ -431,11 +441,11 @@ std::vector<unsigned char> deswizzle_block_linear(
         height,
         depth,
         source,
-        destination,
+        source_size,
+        *destination,
+        *destination_size,
         block_height,
         _block_depth,
         bytes_per_pixel
     );
-
-    return destination;
 }
